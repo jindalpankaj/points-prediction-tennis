@@ -3,7 +3,7 @@
 
 # Ignoring temporary dat file (huge sized) and unused data folder
 /data/Tennis*
-/final_ml_data.dat
+/*.dat
 
 /.idea
 /__pycache__

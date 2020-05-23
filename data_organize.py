@@ -21,12 +21,15 @@ def get_scoreline12(scoreline):
         player_1 = player_num_2
         player_2 = player_num_1
     scoreline12 = []
+    scorelineSR = []
     num_tiebreak_serve_change = 0
     for point in scoreline:
         if point == 'S':
             scoreline12.append(player_1)
+            scorelineSR.append('S')
         elif point == 'R':
             scoreline12.append(player_2)
+            scorelineSR.append('R')
         else:
             pass
         if point == "/":
@@ -38,11 +41,13 @@ def get_scoreline12(scoreline):
             if num_tiebreak_serve_change % 2 == 0:  # flip only if even
                 flip(player_1, player_2)
             num_tiebreak_serve_change = 0  # reset value
-    return scoreline12
+    return [scoreline12, scorelineSR]
 
 # --------------------------------------------------------
 # get previous N points
-pbp_data = pd.read_csv("data\pbp_matches_atp_main_archive.csv")
+pbp_data = pd.read_csv("https://raw.githubusercontent.com/jindalpankaj/tennis_pointbypoint/master/pbp_matches_atp_main_archive.csv",
+                       index_col=None, header=0)
+# pbp_data.head(3)
 # pd.options.display.max_columns = 12
 
 # dropping irrelevant columns
@@ -50,8 +55,8 @@ pbp_data = pbp_data.drop(columns=['draw', 'adf_flag', 'wh_minutes', 'tour'])
 # replacing all Double Faults with R, and all Aces with S
 pbp_data['pbp_SR'] = [x.replace("D", "R") for x in pbp_data['pbp']]
 pbp_data['pbp_SR'] = [x.replace("A", "S") for x in pbp_data['pbp_SR']]
-pbp_data['pbp_12'] = [get_scoreline12(x) for x in pbp_data['pbp_SR']]
-
+pbp_data['pbp_12'] = [get_scoreline12(x)[0] for x in pbp_data['pbp_SR']]
+pbp_data['pbp_SR'] = [get_scoreline12(x)[1] for x in pbp_data['pbp_SR']]
 pbp_data['num_points'] = pbp_data['pbp_12'].str.len() # <- better than -> [len(x) for x in data['pbp_12']]
 pbp_data['date2'] = pd.to_datetime(pbp_data['date'], format='%d %b %y')
 pbp_data.loc[pbp_data['winner'] == 1, 'loser_name'] = pbp_data['server2']
@@ -155,15 +160,22 @@ pbp_data = pbp_data.merge(matches[['winner_name', 'loser_name', 'score', 'winner
 # --------------------------------------------------------
 # preparing data for ML
 
-def generate_lagged_variables(match_index):
+def generate_lagged_variables(match_index, N):
+    # match_index = 1
     shifted_df = pd.DataFrame()
     shifted_df['point_number'] = np.arange(1, pbp_data.loc[match_index, 'num_points'] + 1)
     shifted_df['point_winner'] = pbp_data.loc[match_index, 'pbp_12']
+    shifted_df['point_winner_S_or_R'] = pbp_data.loc[match_index, 'pbp_SR']
+    shifted_df['whose_serve'] = 1
+    shifted_df.loc[(((shifted_df['point_winner'] == 2) & (shifted_df['point_winner_S_or_R'] == 'S'))
+                    | ((shifted_df['point_winner'] == 1) & (shifted_df['point_winner_S_or_R'] == 'R'))),
+               'whose_serve'] = 2
     shifted_df['pbp_id'] = pbp_data.loc[match_index, 'pbp_id']
     shifted_df['player_1'] = pbp_data.loc[match_index, 'server1']
     shifted_df['player_2'] = pbp_data.loc[match_index, 'server2']
     shifted_df['winner'] = pbp_data.loc[match_index, 'winner']
     shifted_df['surface'] = pbp_data.loc[match_index, 'surface']
+    #shifted_df['whose_serve'] = pbp_data.loc[match_index, 'pbp_serve']
     if pbp_data.loc[match_index, 'winner'] == 1:
         shifted_df['player_1_rank'] = pbp_data.loc[match_index, 'winner_rank']
         shifted_df['player_2_rank'] = pbp_data.loc[match_index, 'loser_rank']
@@ -174,7 +186,7 @@ def generate_lagged_variables(match_index):
         print("Ranks not found!")
     # variable to decide how many previous points we consider for prediction
     # maybe passed as a parameter later on
-    N = 20
+    # N = 20
     for x in range(N, 0, -1):
         column_name = 'pw_lag' + str(x)
         shifted_df[column_name] = shifted_df['point_winner'].shift(x)
@@ -192,23 +204,25 @@ def generate_lagged_variables(match_index):
 
 
 num_matches = len(pbp_data)
-final_ml_data = pd.DataFrame()
+# final_ml_data = pd.DataFrame()
 
-for j in range(0, num_matches): # replace 1 by num_matches
-    print(f'Match number: ',j)
-    # concat. ignore index renumbers the index from 0 till end, instead of restarting it from 0 every since time a new dataframe is concated.
-    final_ml_data = pd.concat([final_ml_data, generate_lagged_variables(j)], ignore_index=True)
+# for j in range(0, num_matches): # replace 1 by num_matches
+#     print(f'Match number: ',j)
+#     # concat. ignore index renumbers the index from 0 till end, instead of restarting it from 0 every since time a new dataframe is concated.
+#     final_ml_data = pd.concat([final_ml_data, generate_lagged_variables(j)], ignore_index=True)
 
-pickle.dump(final_ml_data, open("final_ml_data.dat", "wb"))
+# pickle.dump(final_ml_data, open("final_ml_data.dat", "wb"))
 
 # This way might be faster, in case you have to do it again.
 final_ml_list = list()
 for j in range(0, num_matches): # replace 1 by num_matches
     print(f'Match number: {j}')
-    df = generate_lagged_variables(j)
+    df = generate_lagged_variables(j, N = 10)
     final_ml_list.append(df)
     # concat. ignore index renumbers the index from 0 till end, instead of restarting it from 0 every since time a new dataframe is concated.
-final_ml_list_df = pd.concat(final_ml_list, ignore_index=True)
+final_ml_data = pd.concat(final_ml_list, ignore_index=True)
+
+pickle.dump(final_ml_data, open("final_ml_data_23May.dat", "wb"))
 
 # Check for last point in a match == winner field
 match_counter = 0
